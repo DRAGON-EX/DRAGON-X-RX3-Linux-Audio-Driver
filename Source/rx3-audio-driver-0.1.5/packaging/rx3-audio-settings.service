@@ -1,0 +1,8 @@
+# Optional PipeASIO ControlPanel bridge starts this user service. The desktop
+# manager supplies native GUI environment; Wine never executes GTK in-process.
+[Unit]
+Description=Pioneer RX3 Audio Setup (ASIO)
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/rx3-audio-settings --backend asio

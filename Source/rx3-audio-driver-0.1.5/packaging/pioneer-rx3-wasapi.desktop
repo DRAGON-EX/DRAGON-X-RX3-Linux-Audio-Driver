@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Pioneer RX3 Audio Setup (WASAPI)
+Comment=Independent RX3 WASAPI buffer settings
+Exec=rx3-audio-settings --backend wasapi
+Icon=audio-card
+Terminal=false
+Categories=AudioVideo;Audio;

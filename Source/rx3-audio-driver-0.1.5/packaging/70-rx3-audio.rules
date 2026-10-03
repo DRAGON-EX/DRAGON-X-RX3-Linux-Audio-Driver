@@ -1,0 +1,3 @@
+# Only XDJ-RX3; audio interface remains accessible without manual setfacl.
+# uaccess must run before systemd's 73-seat-late.rules.
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="2b73", ATTR{idProduct}=="003d", GROUP="audio", MODE="0660", TAG+="uaccess"

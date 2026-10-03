@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Pioneer RX3 Audio Setup (Linux)
+Comment=Native Linux RX3 buffer settings for direct ALSA, without PipeWire
+Exec=rx3-audio-settings --backend linux
+Icon=audio-card
+Terminal=false
+Categories=AudioVideo;Audio;
