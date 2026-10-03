@@ -1,4 +1,4 @@
-# DRAGON-X RX3 Linux Audio Driver
+# DRAGON-X XDJ-RX3 Linux Audio Driver
 
 **DRAGON-X RX3 Linux Audio Driver** brings the RX3's computer-audio playback features to Linux. It is an experimental, reverse-engineered driver, built to be fully compatible with the RX3's four-channel USB audio output. Connect the RX3 in **Software Control** mode and enjoy separate Master and Headphones playback on Linux. 🎧
 
