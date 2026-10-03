@@ -2,6 +2,8 @@
 
 **DRAGON-X RX3 Linux Audio Driver** brings the RX3's computer-audio playback features to Linux. It is an experimental, reverse-engineered driver, built to be fully compatible with the RX3's four-channel USB audio output. Connect the RX3 in **Software Control** mode and enjoy separate Master and Headphones playback on Linux. 🎧
 
+**Platform support:** The ready-to-install package targets **Arch Linux and Arch-based distributions on x86_64**. Installation uses `pacman`. Other Linux distributions are not packaged or verified yet.
+
 ### ✨ Audio features
 
 - 🎚️ **Master + Headphones:** two independent stereo output pairs, four channels in total.
@@ -42,7 +44,7 @@ xychart-beta
 | 256 samples | 5.80 ms | 0 across 57 active snapshots |
 | 512 samples | 11.61 ms | 0 across 64 active snapshots |
 
-## 📦 Install
+## 📦 Install on Arch Linux
 
 Extract `DRAGON-X_RX3_Linux_Audio_Driver_Setup.zip` and run the included script as your normal desktop user:
 
@@ -76,7 +78,7 @@ Personal settings and ASIO registration inside a Wine prefix remain after packag
 
 ## 🛠️ Build from source
 
-The setup archive includes the corresponding RX3 and PipeASIO source trees and one combined `PKGBUILD` under `Source/`. On Arch/CachyOS x86_64, install the build dependencies through your package manager: `base-devel`, `pkgconf`, `alsa-lib`, `libusb`, `json-c`, `cmake`, `clang`, `lld`, and `wine`. The build command does not download source code.
+The setup archive includes the corresponding RX3 and PipeASIO source trees and one combined `PKGBUILD` under `Source/`. On Arch Linux or an Arch-based distribution (x86_64), install the build dependencies through your package manager: `base-devel`, `pkgconf`, `alsa-lib`, `libusb`, `json-c`, `cmake`, `clang`, `lld`, and `wine`. The build command does not download source code.
 
 ```sh
 cd Source
