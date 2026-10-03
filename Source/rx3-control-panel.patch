@@ -1,0 +1,266 @@
+diff --git a/include/audio.h b/include/audio.h
+index 988d451..6a38d06 100644
+--- a/include/audio.h
++++ b/include/audio.h
+@@ -160,3 +160,6 @@ bool audio_connect(audio_client_t *client, const char *src, const char *dst);
+ void audio_free(void *ptr);
+ /* Frees an array returned by audio_get_device_ports, including its strings. */
+ void audio_free_ports(const char **ports);
++
++/* RX3 integration: request the native user-session settings window. */
++bool audio_launch_rx3_settings(void);
+diff --git a/include/pipeasio_config.h b/include/pipeasio_config.h
+index dae2d97..db2b709 100644
+--- a/include/pipeasio_config.h
++++ b/include/pipeasio_config.h
+@@ -31,6 +31,10 @@
+ 
+ /* --- Product version (driver log + manager About tab) ---------------------- */
+ #define PIPEASIO_VERSION "1.10.0"
++/* Both Wine's ASIO registry description and IASIO::GetDriverName use this
++ * RX3-facing label. Hosts such as VirtualDJ append "(ASIO)" themselves, so
++ * including that suffix here would display it twice. */
++#define RX3_ASIO_DRIVER_NAME "RX3 Master & Headphones"
+ 
+ /* --- File location (relative to $XDG_CONFIG_HOME, else $HOME/.config) ----- */
+ #define PIPEASIO_CONFIG_DIR "pipeasio"
+diff --git a/include/pipeasio_unix_abi.h b/include/pipeasio_unix_abi.h
+index 2867283..326b74e 100644
+--- a/include/pipeasio_unix_abi.h
++++ b/include/pipeasio_unix_abi.h
+@@ -26,7 +26,7 @@
+ #include "pipeasio_config.h"
+ 
+ /* Version 3 makes endpoint and callback delivery transactional. */
+-#define PIPEASIO_UNIX_ABI_VERSION 4
++#define PIPEASIO_UNIX_ABI_VERSION 5
+ 
+ typedef uint32_t pa_handle;
+ 
+@@ -67,6 +67,7 @@ enum pa_call
+     PAU_WAIT_CALLBACK,
+     PAU_REPLY_CALLBACK,
+     PAU_SET_REALTIME,
++    PAU_LAUNCH_RX3_SETTINGS, /* pa_simple_params, result = request accepted */
+     PAU_CALL_COUNT
+ };
+ 
+diff --git a/src/asio.c b/src/asio.c
+index 5eadf50..2b96654 100644
+--- a/src/asio.c
++++ b/src/asio.c
+@@ -1376,7 +1376,8 @@ GetDriverName(LPPIPEASIO iface, char *name)
+     method_token   token;
+     if (!name || !method_begin(This, true, &token))
+         return;
+-    strcpy(name, "PipeASIO");
++    _Static_assert(sizeof(RX3_ASIO_DRIVER_NAME) <= 32, "ASIO driver name exceeds host buffer");
++    strcpy(name, RX3_ASIO_DRIVER_NAME);
+     method_end(&token);
+ }
+ 
+@@ -2464,27 +2465,18 @@ ControlPanel(LPPIPEASIO iface)
+ 
+     TRACE("iface: %p\n", iface);
+ 
+-    /* The settings panel (pipeasio-settings) is a native Linux/Qt app and
+-     * cannot run inside the Wine/Proton container the host loads us into:
+-     * the container has no Qt libraries and no clean route back to the host.
+-     * Rather than fork/exec it and silently fail, tell the user to launch it
+-     * from a host terminal, and point at the exact INI it edits. */
+-    if (!pipeasio_config_path(cfg_path, sizeof cfg_path))
+-        lstrcpynA(cfg_path, "$XDG_CONFIG_HOME/pipeasio/config.ini", sizeof cfg_path);
+-
+-    snprintf(message, sizeof message,
+-             "Please launch the PipeASIO settings panel from a terminal on your "
+-             "Linux host:\n\n"
+-             "    pipeasio-settings\n\n"
+-             "It is a native Linux app, so it cannot run inside this Wine/Proton "
+-             "container.\n\n"
+-             "Settings are saved to:\n    %s\n\n"
+-             "Changes are applied automatically about a second after you save, "
+-             "while PipeASIO is active. If they don't appear, reselect PipeASIO "
+-             "or restart this application.",
+-             cfg_path);
+-
+-    MessageBoxA(NULL, message, "PipeASIO Settings", MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND);
++    /* Launch the RX3 Linux panel through the native user session. A failure
++     * keeps a usable manual command; it does not change the audio settings. */
++    if (!audio_launch_rx3_settings()) {
++        if (!pipeasio_config_path(cfg_path, sizeof cfg_path))
++            lstrcpynA(cfg_path, "$XDG_CONFIG_HOME/pipeasio/config.ini", sizeof cfg_path);
++        snprintf(message, sizeof message,
++                 "Could not open RX3 Audio Settings.\n\n"
++                 "Run rx3-audio-settings on your Linux desktop.\n"
++                 "This integration requires the rx3-audio-driver package "
++                 "and a systemd user session.\n\nPipeASIO config: %s", cfg_path);
++        MessageBoxA(NULL, message, "RX3 Audio Settings", MB_OK | MB_ICONINFORMATION);
++    }
+     method_end(&token);
+     return 0;
+ }
+diff --git a/src/regsvr.c b/src/regsvr.c
+index ca1a120..215d9bb 100644
+--- a/src/regsvr.c
++++ b/src/regsvr.c
+@@ -30,6 +30,7 @@
+ #include "winreg.h"
+ #include "objbase.h"
+ #include "pipeasio_guids.h"
++#include "pipeasio_config.h"
+ 
+ /*
+  * Near the bottom of this file are the exported DllRegisterServer and
+@@ -475,7 +476,7 @@ recursive_delete_keyW(HKEY base, WCHAR const *name)
+  */
+ // {2d3ca9e2-1193-4c5d-b5fd-38798f3dc074}
+ static struct regsvr_coclass const coclass_list[] = {
+-    { &CLSID_PipeASIO, "PipeASIO Object", NULL,
++    { &CLSID_PipeASIO, RX3_ASIO_DRIVER_NAME, NULL,
+ #ifdef _WIN64
+       "pipeasio64.dll",
+ #else
+@@ -503,7 +504,7 @@ register_driver(void)
+     LPCSTR clsid      = "CLSID";
+     LPCSTR wine_clsid = "{2D3CA9E2-1193-4C5D-B5FD-38798F3DC074}";
+     LPCSTR desc       = "Description";
+-    LPCSTR wine_desc  = "PipeASIO Driver";
++    LPCSTR wine_desc  = RX3_ASIO_DRIVER_NAME;
+     HKEY   key;
+     LONG   rc;
+ 
+diff --git a/src/unixlib/audio_proxy.c b/src/unixlib/audio_proxy.c
+index 2ac92af..08fc4ae 100644
+--- a/src/unixlib/audio_proxy.c
++++ b/src/unixlib/audio_proxy.c
+@@ -659,3 +659,13 @@ pipeasio_pe_bind_rt(audio_client_t *client, float *buffer_base, int buffer_size,
+         params.out_active[i] = out_active && out_active[i];
+     return UCALL(PAU_BIND_RT, &params) == 0 && params.result != 0;
+ }
++
++/* Called only by the host's control-panel action, never by bufferSwitch. */
++bool
++audio_launch_rx3_settings(void)
++{
++    pa_simple_params p = {0};
++    if (!ensure_unixlib()) return false;
++    p.version = PIPEASIO_UNIX_ABI_VERSION;
++    return UCALL(PAU_LAUNCH_RX3_SETTINGS, &p) == 0 && p.result != 0;
++}
+diff --git a/src/unixlib/audio_unix.c b/src/unixlib/audio_unix.c
+index c0229aa..2fd4f87 100644
+--- a/src/unixlib/audio_unix.c
++++ b/src/unixlib/audio_unix.c
+@@ -1,3 +1,6 @@
++#ifndef _GNU_SOURCE
++#define _GNU_SOURCE
++#endif
+ /*
+  * SPDX-License-Identifier: GPL-3.0-or-later
+  *
+@@ -35,6 +38,11 @@
+ #include <string.h>
+ #include <sys/stat.h>
+ #include <time.h>
++#include <errno.h>
++#include <signal.h>
++#include <spawn.h>
++#include <sys/wait.h>
++#include <unistd.h>
+ 
+ #include "audio.h"
+ #include "pipeasio_config.h"
+@@ -953,6 +961,55 @@ unix_reserved(void *args)
+     return STATUS_NOT_SUPPORTED;
+ }
+ 
++/* RX3 integration uses a fixed user service, not a shell or a configurable
++ * command. systemd starts GTK with the desktop session environment, outside
++ * Wine's DLL/container environment. No USB operation or audio restart occurs.
++ * This optional bridge targets native system Wine on systemd desktops. */
++static NTSTATUS
++unix_launch_rx3_settings(void *args)
++{
++    pa_simple_params *p = args;
++    posix_spawn_file_actions_t actions;
++    posix_spawnattr_t attrs;
++    struct sched_param normal = {0};
++    pid_t child;
++    int rc, status;
++    extern char **environ;
++    char *argv[] = {"/usr/bin/systemctl", "--user", "--no-block", "start",
++                    "rx3-audio-settings.service", NULL};
++    PAU_CHECK(p);
++    p->result = 0;
++    if (posix_spawn_file_actions_init(&actions)) return STATUS_SUCCESS;
++    if (posix_spawnattr_init(&attrs)) {
++        posix_spawn_file_actions_destroy(&actions);
++        return STATUS_SUCCESS;
++    }
++    rc = posix_spawn_file_actions_addclosefrom_np(&actions, 3);
++    if (!rc) rc = posix_spawnattr_setschedpolicy(&attrs, SCHED_OTHER);
++    if (!rc) rc = posix_spawnattr_setschedparam(&attrs, &normal);
++    if (!rc) rc = posix_spawnattr_setflags(&attrs, POSIX_SPAWN_RESETIDS |
++                      POSIX_SPAWN_SETSCHEDULER | POSIX_SPAWN_SETSCHEDPARAM);
++    if (!rc) rc = posix_spawn(&child, argv[0], &actions, &attrs, argv, environ);
++    posix_spawn_file_actions_destroy(&actions);
++    posix_spawnattr_destroy(&attrs);
++    if (rc) return STATUS_SUCCESS;
++    /* Bound UI-thread waiting and reap our own short-lived launcher. The GUI
++     * itself is a user service, so it does not remain a child of the ASIO host. */
++    for (unsigned i = 0; i < 150; ++i) {
++        pid_t got = waitpid(child, &status, WNOHANG);
++        if (got == child) {
++            p->result = WIFEXITED(status) && WEXITSTATUS(status) == 0;
++            return STATUS_SUCCESS;
++        }
++        if (got < 0 && errno != EINTR) return STATUS_SUCCESS;
++        struct timespec pause = {0, 20000000};
++        nanosleep(&pause, NULL);
++    }
++    kill(child, SIGKILL);
++    while (waitpid(child, &status, 0) < 0 && errno == EINTR) {}
++    return STATUS_SUCCESS;
++}
++
+ /* Call tables.  Order must match enum pa_call. */
+ 
+ const unixlib_entry_t __wine_unix_call_funcs[] = {
+@@ -985,6 +1042,7 @@ const unixlib_entry_t __wine_unix_call_funcs[] = {
+     unix_wait_callback,
+     unix_reply_callback,
+     unix_set_realtime,
++    unix_launch_rx3_settings,
+ };
+ 
+ #ifdef _WIN64
+@@ -1019,6 +1077,7 @@ const unixlib_entry_t __wine_unix_call_wow64_funcs[] = {
+     unix_wait_callback,
+     unix_reply_callback,
+     unix_set_realtime,
++    unix_launch_rx3_settings,
+ };
+ _Static_assert(sizeof(__wine_unix_call_wow64_funcs) / sizeof(__wine_unix_call_wow64_funcs[0])
+                        == PAU_CALL_COUNT,
+diff --git a/tests/unixlib/unix_abi_layout.c b/tests/unixlib/unix_abi_layout.c
+index 12b15eb..95b7d80 100644
+--- a/tests/unixlib/unix_abi_layout.c
++++ b/tests/unixlib/unix_abi_layout.c
+@@ -30,7 +30,7 @@
+ #define CHECK(expr, msg) _Static_assert((expr), msg)
+ 
+ CHECK(sizeof(void *) == EXPECTED_POINTER_SIZE, "unexpected compiler bitness");
+-CHECK(PIPEASIO_UNIX_ABI_VERSION == 4, "ABI version changed - bump both halves");
++CHECK(PIPEASIO_UNIX_ABI_VERSION == 5, "ABI version changed - bump both halves");
+ CHECK(PAU_RT_MAX_PORTS == 256, "RT channel cap changed");
+ CHECK(PAU_ENDPOINT_MAX == 256, "endpoint cap changed");
+ 
+@@ -42,7 +42,7 @@ CHECK(PAU_LOAD_CONFIG == 24, "call enum drift");
+ CHECK(PAU_WAIT_CALLBACK == 26, "call enum drift");
+ CHECK(PAU_REPLY_CALLBACK == 27, "call enum drift");
+ CHECK(PAU_SET_REALTIME == 28, "call enum drift - PAU_SET_REALTIME must stay appended");
+-CHECK(PAU_CALL_COUNT == 29, "call count drift - update both unix call tables");
++CHECK(PAU_CALL_COUNT == 30, "call count drift - update both unix call tables");
+ CHECK(PAU_CB_BUFFER_SWITCH == 0, "callback kind drift");
+ CHECK(PAU_CB_RESERVED_3 == 3, "callback kind drift");
+ 

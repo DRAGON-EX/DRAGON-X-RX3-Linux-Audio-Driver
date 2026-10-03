@@ -1,0 +1,29 @@
+# Pacman owns all system configuration files. User-session work is delegated
+# only after installation; the helper drops privileges for each active user.
+post_install() {
+    if command -v udevadm >/dev/null 2>&1; then
+        udevadm control --reload-rules || true
+        # Apply RX3 access permissions now, including an already connected RX3.
+        udevadm trigger --action=change --subsystem-match=usb \
+            --attr-match=idVendor=2b73 --attr-match=idProduct=003d || true
+    fi
+    /usr/lib/rx3-audio-driver/rx3-sessions setup || true
+    printf '%s\n' \
+        'RX3 default: 512 samples, two periods, 44.1 kHz, ALSA poll scheduling.' \
+        'Native Linux: Pioneer RX3 (ALSA), PCM rx3_native, no PipeWire.' \
+        'Wine/VirtualDJ: RX3 Master + Headphones (four channels).' \
+        'Automatic setup also runs at the next PipeWire start.' \
+        'Offline check: rx3-audio-selftest; live PipeWire XRuns: pw-top' \
+        'Instructions: /usr/share/doc/rx3-audio-driver/README.md'
+}
+post_upgrade() { post_install; }
+
+# This must run before files disappear, while the user-session helper is still
+# installed. Remove only owned RX3 objects; do not restart PipeWire globally.
+pre_remove() { /usr/lib/rx3-audio-driver/rx3-sessions remove || true; }
+post_remove() {
+    if command -v udevadm >/dev/null 2>&1; then
+        udevadm control --reload-rules || true
+    fi
+    printf '%s\n' 'RX3 audio driver removed. Personal buffer preferences remain in the user profile.'
+}
